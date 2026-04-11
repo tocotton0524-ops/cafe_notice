@@ -24,13 +24,14 @@ HISTORY_FILE = "history.json"
 WEBHOOK_URL = os.environ.get("DISCORD_WEBHOOK_URL")
 
 def get_articles(club_id, menu_id=None):
-    url = f"https://m.cafe.naver.com/ca-fe/web/cafes/{club_id}/articles"
+    # "articles"ではなくトップページから直接記事一覧を拾うように修正
     if menu_id:
         url = f"https://m.cafe.naver.com/ca-fe/web/cafes/{club_id}/menus/{menu_id}"
+    else:
+        url = f"https://m.cafe.naver.com/ca-fe/web/cafes/{club_id}"
         
     articles = []
     
-    # 隠しブラウザ(Chrome)を立ち上げて人間のようにアクセス
     with sync_playwright() as p:
         browser = p.chromium.launch(headless=True)
         context = browser.new_context(
@@ -42,22 +43,21 @@ def get_articles(club_id, menu_id=None):
         try:
             page.goto(url, wait_until="networkidle", timeout=30000)
             
-            # 記事リストの表示を少し待つ
-            page.wait_for_selector("a.article", timeout=15000)
+            # 記事リストの表示を少し待つ（複数の名前のラベルに対応）
+            page.wait_for_selector("a.mainLink, a.article, .ArticleItem, .list_item", timeout=15000)
             
             # ページ内の記事一覧を取得
-            items = page.query_selector_all("a.article")
+            items = page.query_selector_all("a.mainLink, a.article, .board_item a")
             
             for item in items[:20]:  # 最新20件
                 try:
                     subject = ""
-                    tit_el = item.query_selector("strong.tit")
+                    tit_el = item.query_selector("strong.tit, .subject")
                     if tit_el:
                         subject = tit_el.inner_text().strip()
                         
                     writer = ""
-                    # Naverモバイル版は作者名が同じaタグ内やすぐ近くにある
-                    author_el = item.query_selector(".nick_area .name, .name")
+                    author_el = item.query_selector(".nick_area .name, .name, .nick, .writer")
                     if author_el:
                         writer = author_el.inner_text().strip()
                         
@@ -66,9 +66,16 @@ def get_articles(club_id, menu_id=None):
                         continue
                         
                     # URLから記事IDを抜き出す
-                    article_id_match = re.search(r'/articles/(\d+)', href)
-                    if article_id_match:
-                        article_id = int(article_id_match.group(1))
+                    article_id = 0
+                    m1 = re.search(r'/articles/(\d+)', href)
+                    m2 = re.search(r'articleid=(\d+)', href.lower())
+                    
+                    if m1:
+                        article_id = int(m1.group(1))
+                    elif m2:
+                        article_id = int(m2.group(1))
+                        
+                    if article_id > 0 and subject:
                         articles.append({
                             "articleId": article_id,
                             "subject": subject,
@@ -146,7 +153,7 @@ def main():
             json.dump(history, f)
         print("履歴を更新しました。")
     else:
-        print("新しい記事はありませんでした。（取得は成功しています）")
+        print("新しい記事はありませんでした。（取得は成功していますが0件でした）")
 
 if __name__ == "__main__":
     main()
