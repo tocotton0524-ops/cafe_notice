@@ -4,16 +4,16 @@ import requests
 
 TARGETS = [
     {
-        "name": "아카캉 카페 (全体)",
+        "name": "아카캉 카페 (아카캉)",
         "club_id": "30984349",
         "menu_id": None,
-        "target_author": None
+        "target_author": "아카캉"  # 👈 ここを「아카캉」に絞りました！
     },
     {
         "name": "스텔라이브 카페 (게시판 382)",
         "club_id": "29424353",
         "menu_id": "382",
-        "target_author": None
+        "target_author": None     # 👈 2つ目は誰が投稿しても通知します
     }
 ]
 
@@ -46,12 +46,11 @@ def get_articles(club_id, menu_id=None):
         data = response.json()
         articles = []
         
-        # データの正しい取り出し口
         items = data.get("message", {}).get("result", {}).get("articleList", [])
         
         for item in items:
             article_id = item.get("articleId")
-            if article_id:  # 記事データが存在すれば追加
+            if article_id:
                 articles.append({
                     "articleId": article_id,
                     "subject": item.get("subject"),
@@ -71,7 +70,9 @@ def send_discord_notification(article, cafe_name, club_id):
     article_id = article.get("articleId")
     title = article.get("subject")
     author = article.get("writerNickname", "不明")
-    article_url = f"https://cafe.naver.com/ArticleRead.nhn?clubid={club_id}&articleid={article_id}"
+    
+    # 👈 URLを新しいスマホ向け（f-e）の形に修正しました
+    article_url = f"https://cafe.naver.com/f-e/cafes/{club_id}/articles/{article_id}"
     
     payload = {
         "content": f"🚨 **新しい通知があります！**\n\n**カフェ:** {cafe_name}\n**投稿者:** {author}\n**タイトル:** {title}\n**URL:** {article_url}"
@@ -115,6 +116,8 @@ def main():
         
         for article in reversed(new_articles):
             author = article.get("writerNickname", "")
+            
+            # 👈 特定の人に絞り込む設定がここで活きます 
             if author_filter and author_filter != author:
                 continue
                 
