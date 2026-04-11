@@ -1,7 +1,6 @@
 import os
 import json
 import requests
-from datetime import datetime
 
 TARGETS = [
     {
@@ -22,7 +21,6 @@ HISTORY_FILE = "history.json"
 WEBHOOK_URL = os.environ.get("DISCORD_WEBHOOK_URL")
 
 def get_articles(club_id, menu_id=None):
-    # Naverカフェ公式の最新データAPIを直接叩く
     url = "https://apis.naver.com/cafe-web/cafe2/ArticleListV3dot1.json"
     params = {
         "search.clubid": club_id,
@@ -42,23 +40,24 @@ def get_articles(club_id, menu_id=None):
     try:
         response = requests.get(url, params=params, headers=headers)
         if response.status_code != 200:
-            print(f"Error: {response.status_code}")
+            print(f"Error HTTP {response.status_code}")
             return []
             
         data = response.json()
         articles = []
         
-        # JSONの奥底にある記事リストを取り出す
+        # データの正しい取り出し口
         items = data.get("message", {}).get("result", {}).get("articleList", [])
         
-        for wrapper in items:
-            if wrapper.get("type") == "ARTICLE":  # 広告などを除外して記事だけを取る
-                item = wrapper.get("item", {})
+        for item in items:
+            article_id = item.get("articleId")
+            if article_id:  # 記事データが存在すれば追加
                 articles.append({
-                    "articleId": item.get("articleId"),
+                    "articleId": article_id,
                     "subject": item.get("subject"),
                     "writerNickname": item.get("writerNickname")
                 })
+                
         return articles
     except Exception as e:
         print(f"API Error fetching {club_id}: {e}")
@@ -78,8 +77,11 @@ def send_discord_notification(article, cafe_name, club_id):
         "content": f"🚨 **新しい通知があります！**\n\n**カフェ:** {cafe_name}\n**投稿者:** {author}\n**タイトル:** {title}\n**URL:** {article_url}"
     }
     
-    requests.post(WEBHOOK_URL, json=payload)
-    print(f"通知を送信しました: {title}")
+    try:
+        requests.post(WEBHOOK_URL, json=payload)
+        print(f"通知を送信しました: {title}")
+    except Exception as e:
+        print(f"Discordへの送信エラー: {e}")
 
 def main():
     if os.path.exists(HISTORY_FILE):
