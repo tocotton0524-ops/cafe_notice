@@ -1,9 +1,7 @@
 import os
 import json
 import requests
-import re
 from datetime import datetime
-from playwright.sync_api import sync_playwright
 
 TARGETS = [
     {
@@ -24,71 +22,47 @@ HISTORY_FILE = "history.json"
 WEBHOOK_URL = os.environ.get("DISCORD_WEBHOOK_URL")
 
 def get_articles(club_id, menu_id=None):
-    # "articles"ではなくトップページから直接記事一覧を拾うように修正
+    # Naverカフェ公式の最新データAPIを直接叩く
+    url = "https://apis.naver.com/cafe-web/cafe2/ArticleListV3dot1.json"
+    params = {
+        "search.clubid": club_id,
+        "search.queryType": "lastArticle",
+        "search.page": 1,
+        "search.perPage": 20
+    }
     if menu_id:
-        url = f"https://m.cafe.naver.com/ca-fe/web/cafes/{club_id}/menus/{menu_id}"
-    else:
-        url = f"https://m.cafe.naver.com/ca-fe/web/cafes/{club_id}"
+        params["search.menuid"] = menu_id
+
+    headers = {
+        "Referer": f"https://m.cafe.naver.com/ca-fe/web/cafes/{club_id}",
+        "X-Cafe-Product": "mweb",
+        "User-Agent": "Mozilla/5.0 (iPhone; CPU iPhone OS 16_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.0 Mobile/15E148 Safari/604.1"
+    }
+
+    try:
+        response = requests.get(url, params=params, headers=headers)
+        if response.status_code != 200:
+            print(f"Error: {response.status_code}")
+            return []
+            
+        data = response.json()
+        articles = []
         
-    articles = []
-    
-    with sync_playwright() as p:
-        browser = p.chromium.launch(headless=True)
-        context = browser.new_context(
-            user_agent="Mozilla/5.0 (iPhone; CPU iPhone OS 16_6 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.6 Mobile/15E148 Safari/604.1",
-            viewport={"width": 375, "height": 812}
-        )
-        page = context.new_page()
+        # JSONの奥底にある記事リストを取り出す
+        items = data.get("message", {}).get("result", {}).get("articleList", [])
         
-        try:
-            page.goto(url, wait_until="networkidle", timeout=30000)
-            
-            # 記事リストの表示を少し待つ（複数の名前のラベルに対応）
-            page.wait_for_selector("a.mainLink, a.article, .ArticleItem, .list_item", timeout=15000)
-            
-            # ページ内の記事一覧を取得
-            items = page.query_selector_all("a.mainLink, a.article, .board_item a")
-            
-            for item in items[:20]:  # 最新20件
-                try:
-                    subject = ""
-                    tit_el = item.query_selector("strong.tit, .subject")
-                    if tit_el:
-                        subject = tit_el.inner_text().strip()
-                        
-                    writer = ""
-                    author_el = item.query_selector(".nick_area .name, .name, .nick, .writer")
-                    if author_el:
-                        writer = author_el.inner_text().strip()
-                        
-                    href = item.get_attribute("href")
-                    if not href:
-                        continue
-                        
-                    # URLから記事IDを抜き出す
-                    article_id = 0
-                    m1 = re.search(r'/articles/(\d+)', href)
-                    m2 = re.search(r'articleid=(\d+)', href.lower())
-                    
-                    if m1:
-                        article_id = int(m1.group(1))
-                    elif m2:
-                        article_id = int(m2.group(1))
-                        
-                    if article_id > 0 and subject:
-                        articles.append({
-                            "articleId": article_id,
-                            "subject": subject,
-                            "writerNickname": writer
-                        })
-                except Exception as e:
-                    continue
-        except Exception as e:
-            print(f"Error fetching {club_id}: ページの読み込みに失敗しました ({e})")
-        finally:
-            browser.close()
-            
-    return articles
+        for wrapper in items:
+            if wrapper.get("type") == "ARTICLE":  # 広告などを除外して記事だけを取る
+                item = wrapper.get("item", {})
+                articles.append({
+                    "articleId": item.get("articleId"),
+                    "subject": item.get("subject"),
+                    "writerNickname": item.get("writerNickname")
+                })
+        return articles
+    except Exception as e:
+        print(f"API Error fetching {club_id}: {e}")
+        return []
 
 def send_discord_notification(article, cafe_name, club_id):
     if not WEBHOOK_URL:
@@ -153,7 +127,7 @@ def main():
             json.dump(history, f)
         print("履歴を更新しました。")
     else:
-        print("新しい記事はありませんでした。（取得は成功していますが0件でした）")
+        print("新しい記事はありませんでした。")
 
 if __name__ == "__main__":
     main()
