@@ -1,19 +1,22 @@
 import os
 import json
 import requests
+from datetime import datetime
 
+# 設定: 監視するカフェの情報
+# ユーザーの希望URLに基づく設定
 TARGETS = [
     {
-        "name": "아카캉 카페 (아카캉)",
+        "name": "아카캉 카페 (全体)",
         "club_id": "30984349",
-        "menu_id": None,
-        "target_author": "아카캉"  # 👈 ここを「아카캉」に絞りました！
+        "menu_id": None,  # 全体の新着を見る場合は None
+        "target_author": None # 特定のメンバーだけ通知したい場合はここに名前を入力 (例: "아카캉")
     },
     {
         "name": "스텔라이브 카페 (게시판 382)",
         "club_id": "29424353",
-        "menu_id": "382",
-        "target_author": None     # 👈 2つ目は誰が投稿しても通知します
+        "menu_id": "382", # URLにあった menuid=382 に限定
+        "target_author": None
     }
 ]
 
@@ -21,76 +24,51 @@ HISTORY_FILE = "history.json"
 WEBHOOK_URL = os.environ.get("DISCORD_WEBHOOK_URL")
 
 def get_articles(club_id, menu_id=None):
-    url = "https://apis.naver.com/cafe-web/cafe2/ArticleListV3dot1.json"
-    params = {
-        "search.clubid": club_id,
-        "search.queryType": "lastArticle",
-        "search.page": 1,
-        "search.perPage": 20
-    }
+    """Naver Cafe APIから記事一覧を取得する"""
+    timestamp = int(datetime.now().timestamp() * 1000)
+    url = f"https://apis.naver.com/cafe-web/cafe2/ArticleList.json?search.clubid={club_id}&search.queryType=lastArticle&search.page=1&search.perPage=20&t={timestamp}"
     if menu_id:
-        params["search.menuid"] = menu_id
-
+        url += f"&search.menuid={menu_id}"
+        
     headers = {
-        "Referer": f"https://m.cafe.naver.com/ca-fe/web/cafes/{club_id}",
-        "X-Cafe-Product": "mweb",
-        "User-Agent": "Mozilla/5.0 (iPhone; CPU iPhone OS 16_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.0 Mobile/15E148 Safari/604.1"
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+        'Referer': f'https://m.cafe.naver.com/ca-fe/web/cafes/{club_id}'
     }
-
-    try:
-        response = requests.get(url, params=params, headers=headers)
-        if response.status_code != 200:
-            print(f"Error HTTP {response.status_code}")
-            return []
-            
+    
+    response = requests.get(url, headers=headers)
+    if response.status_code == 200:
         data = response.json()
-        articles = []
-        
-        items = data.get("message", {}).get("result", {}).get("articleList", [])
-        
-        for item in items:
-            article_id = item.get("articleId")
-            if article_id:
-                articles.append({
-                    "articleId": article_id,
-                    "subject": item.get("subject"),
-                    "writerNickname": item.get("writerNickname")
-                })
-                
+        articles = data.get("message", {}).get("result", {}).get("articleList", [])
         return articles
-    except Exception as e:
-        print(f"API Error fetching {club_id}: {e}")
+    else:
+        print(f"Error fetching {club_id}: {response.status_code}")
         return []
 
 def send_discord_notification(article, cafe_name, club_id):
+    """DiscordにWebhookで通知を送信する"""
     if not WEBHOOK_URL:
         print("Webhook URLが設定されていません。")
         return
 
     article_id = article.get("articleId")
     title = article.get("subject")
-    author = article.get("writerNickname", "不明")
+    author = article.get("writerNickname")
     
-    # 👈 URLを新しいスマホ向け（f-e）の形に修正しました
-    article_url = f"https://cafe.naver.com/f-e/cafes/{club_id}/articles/{article_id}"
+    # 記事のURL
+    article_url = f"https://cafe.naver.com/ArticleRead.nhn?clubid={club_id}&articleid={article_id}"
     
     payload = {
         "content": f"🚨 **新しい通知があります！**\n\n**カフェ:** {cafe_name}\n**投稿者:** {author}\n**タイトル:** {title}\n**URL:** {article_url}"
     }
     
-    try:
-        requests.post(WEBHOOK_URL, json=payload)
-        print(f"通知を送信しました: {title}")
-    except Exception as e:
-        print(f"Discordへの送信エラー: {e}")
+    requests.post(WEBHOOK_URL, json=payload)
+    print(f"通知を送信しました: {title}")
 
 def main():
+    # 履歴の読み込み
     if os.path.exists(HISTORY_FILE):
         with open(HISTORY_FILE, "r", encoding="utf-8") as f:
-            try:
-                history = json.load(f)
-            except:
-                history = {}
+            history = json.load(f)
     else:
         history = {}
 
@@ -102,6 +80,7 @@ def main():
         cafe_name = target["name"]
         author_filter = target.get("target_author")
         
+        # 履歴キー (カフェごとに最新の記事IDを保持)
         history_key = f"{club_id}_{menu_id if menu_id else 'all'}"
         last_article_id = history.get(history_key, 0)
         
@@ -109,24 +88,28 @@ def main():
         
         articles = get_articles(club_id, menu_id)
         if not articles:
-            print(f"{cafe_name} から記事が1つも取得できませんでした。")
             continue
             
+        # 一番新しい記事からチェック（通常、APIの最初の要素が最新）
+        # ただし、設定より新しいものだけをチェックしたいので逆順に処理して通知する
         new_articles = [a for a in articles if a.get("articleId", 0) > last_article_id]
         
+        # 逆順 (古い順) から通知して時系列を保つ
         for article in reversed(new_articles):
             author = article.get("writerNickname", "")
             
-            # 👈 特定の人に絞り込む設定がここで活きます 
+            # フィルター指定があれば、その作成者の記事だけ通知する
             if author_filter and author_filter != author:
                 continue
                 
             send_discord_notification(article, cafe_name, club_id)
             
+        # 履歴の更新
         if new_articles:
             history[history_key] = max([a.get("articleId", 0) for a in new_articles])
             changed = True
 
+    # 履歴に更新があれば保存して終了する
     if changed:
         with open(HISTORY_FILE, "w", encoding="utf-8") as f:
             json.dump(history, f)
