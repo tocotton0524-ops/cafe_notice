@@ -10,13 +10,13 @@ TARGETS = [
         "name": "아카캉 카페 (全体)",
         "club_id": "30984349",
         "menu_id": None,  # 全体の新着を見る場合は None
-        "target_author": None # 特定のメンバーだけ通知したい場合はここに名前を入力 (例: "아카캉")
+        "target_author": "아카캉" # 特定のメンバーだけ通知したい場合はここに名前を入力 (例: "아카캉")
     },
     {
         "name": "스텔라이브 카페 (게시판 382)",
         "club_id": "29424353",
         "menu_id": "382", # URLにあった menuid=382 に限定
-        "target_author": None
+        "target_author": "사키하네 후야"
     }
 ]
 
@@ -25,14 +25,14 @@ WEBHOOK_URL = os.environ.get("DISCORD_WEBHOOK_URL")
 
 def get_articles(club_id, menu_id=None):
     """Naver Cafe APIから記事一覧を取得する"""
-    timestamp = int(datetime.now().timestamp() * 1000)
-    url = f"https://apis.naver.com/cafe-web/cafe2/ArticleList.json?search.clubid={club_id}&search.queryType=lastArticle&search.page=1&search.perPage=20&t={timestamp}"
+    url = f"https://apis.naver.com/cafe-web/cafe2/ArticleListV3dot1.json?search.clubid={club_id}&search.queryType=lastArticle&search.page=1&search.perPage=20"
     if menu_id:
         url += f"&search.menuid={menu_id}"
         
     headers = {
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
-        'Referer': f'https://m.cafe.naver.com/ca-fe/web/cafes/{club_id}'
+        'Referer': f'https://m.cafe.naver.com/ca-fe/web/cafes/{club_id}',
+        'X-Cafe-Product': 'mweb'
     }
     
     response = requests.get(url, headers=headers)
